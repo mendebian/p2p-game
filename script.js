@@ -10,6 +10,7 @@ let score = { home: 0, away: 0 };
 let peer = new Peer();
 let connections = [];
 let hostId = null;
+let speed = 2.4;  // Velocidade constante do jogador
 
 peer.on("open", id => {
   localPlayer.id = id;
@@ -32,12 +33,20 @@ function createRoomAsHost() {
   peer.on("connection", connection => {
     connections.push(connection);
     connection.on("open", () => {
-      // Envia o estado inicial para o novo jogador.
       connection.send({ type: "init", players, score });
     });
 
     connection.on("data", data => {
       handleHostData(data, connection);
+    });
+
+    connection.on("close", () => {
+      // Remove jogador desconectado
+      const disconnectedPlayer = connections.find(c => c.peer === connection.peer);
+      if (disconnectedPlayer) {
+        connections.splice(connections.indexOf(disconnectedPlayer), 1);
+        handleHostData({ type: "playerDisconnected", playerId: connection.peer });
+      }
     });
   });
 }
@@ -52,6 +61,12 @@ function connectToHost(hostRoomId) {
 
     // Recebe dados centralizados do host.
     conn.on("data", handleClientData);
+  });
+
+  conn.on("close", () => {
+    // O jogador foi desconectado do host.
+    alert("Você foi desconectado do host.");
+    players = {}; // Limpa o estado local.
   });
 }
 
@@ -74,6 +89,7 @@ function handleHostData(data, connection) {
       break;
 
     case "playerDisconnected":
+      // Remove jogador do estado global e envia atualização para todos.
       delete players[data.playerId];
       broadcast({ type: "updatePlayers", players });
       break;
@@ -147,10 +163,21 @@ canvas.addEventListener("touchmove", e => {
   const touchX = e.touches[0].clientX;
   const touchY = e.touches[0].clientY;
 
-  const deltaX = touchX - touchStartX;
-  const deltaY = touchY - touchStartY;
+  // Calcula o ângulo entre o ponto de toque e a posição do jogador
+  const deltaX = touchX - localPlayer.x;
+  const deltaY = touchY - localPlayer.y;
+  const angle = Math.atan2(deltaY, deltaX);
 
-  sendPlayerAction("move", deltaX, deltaY);
+  // Calcula os deltas de movimento baseados no ângulo e na velocidade
+  const moveX = speed * Math.cos(angle);
+  const moveY = speed * Math.sin(angle);
+
+  // Atualiza a posição do jogador
+  localPlayer.x += moveX;
+  localPlayer.y += moveY;
+
+  // Envia a atualização para o host ou processa localmente
+  sendPlayerAction("move", moveX, moveY);
 
   touchStartX = touchX;
   touchStartY = touchY;
