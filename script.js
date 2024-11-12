@@ -11,6 +11,8 @@ let peer = new Peer();
 let connections = [];
 let hostId = null;
 let speed = 2.4;  // Velocidade constante do jogador
+let directionAngle = 0;  // O ângulo de direção do jogador (baseado no toque)
+let isMoving = false;  // Flag para saber se o jogador está em movimento
 
 peer.on("open", id => {
   localPlayer.id = id;
@@ -166,15 +168,18 @@ canvas.addEventListener("touchmove", e => {
   // Calcula o ângulo entre o ponto de toque e a posição do jogador
   const deltaX = touchX - localPlayer.x;
   const deltaY = touchY - localPlayer.y;
-  const angle = Math.atan2(deltaY, deltaX);
+  directionAngle = Math.atan2(deltaY, deltaX);
 
   // Calcula os deltas de movimento baseados no ângulo e na velocidade
-  const moveX = speed * Math.cos(angle);
-  const moveY = speed * Math.sin(angle);
+  const moveX = speed * Math.cos(directionAngle);
+  const moveY = speed * Math.sin(directionAngle);
 
   // Atualiza a posição do jogador
   localPlayer.x += moveX;
   localPlayer.y += moveY;
+
+  // Marca que o jogador está se movendo
+  isMoving = true;
 
   // Envia a atualização para o host ou processa localmente
   sendPlayerAction("move", moveX, moveY);
@@ -183,16 +188,52 @@ canvas.addEventListener("touchmove", e => {
   touchStartY = touchY;
 });
 
+// Função para desenhar a seta minimalista na lateral direita do jogador
+function drawDirectionIndicator(player) {
+  if (!isMoving) return; // Não desenha a seta se o jogador não estiver se movendo
+
+  const indicatorSize = 5; // Tamanho da seta minimalista
+  const offset = 10; // Distância da seta da lateral do jogador
+
+  ctx.save(); // Salva o estado atual da canvas
+
+  ctx.translate(player.x, player.y); // Move a origem para o centro do jogador
+  ctx.rotate(directionAngle); // Rotaciona a canvas para alinhar com o ângulo de direção
+
+  // Inverte a seta horizontalmente (escala negativa no eixo X)
+  ctx.scale(-1, 1);
+
+  // Posiciona a seta à direita do jogador
+  ctx.translate(-(playerRadius + offset), 0); // Desloca para a lateral direita do jogador (invertido)
+
+  // Desenha o triângulo minimalista como seta
+  ctx.beginPath();
+  ctx.moveTo(0, 0); // Posição da base da seta
+  ctx.lineTo(indicatorSize, -indicatorSize); // Ponta da seta
+  ctx.lineTo(indicatorSize, indicatorSize); // Outra ponta da seta
+  ctx.closePath();
+
+  ctx.fillStyle = "black"; // Cor da seta
+  ctx.fill();
+  ctx.restore(); // Restaura a canvas para o estado anterior
+}
+
 // Game loop apenas renderiza localmente os dados recebidos.
 function renderGame() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  // Desenha todos os jogadores
   Object.values(players).forEach(player => {
     ctx.beginPath();
     ctx.arc(player.x, player.y, playerRadius, 0, Math.PI * 2);
     ctx.fillStyle = player.id === localPlayer.id ? "green" : "blue";
     ctx.fill();
     ctx.closePath();
+
+    // Desenha o indicador de direção para o jogador local
+    if (player.id === localPlayer.id) {
+      drawDirectionIndicator(player);
+    }
   });
 }
 
