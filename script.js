@@ -19,6 +19,7 @@ const world = engine.world;
 world.gravity.y = 0;
 const playerBodies = {};
 
+// PeerJS Setup
 peer.on("open", id => {
   localPlayer.id = id;
   const roomId = prompt("Insira o ID da sala para se conectar ou deixe vazio para criar uma nova:");
@@ -30,23 +31,18 @@ peer.on("open", id => {
   }
 });
 
+// Host Functions
 function createRoomAsHost() {
   hostId = localPlayer.id;
   localPlayer.isHost = true;
   displayRoomId(localPlayer.id);
 
   players[localPlayer.id] = { x: localPlayer.x, y: localPlayer.y, id: localPlayer.id };
-  
-  playerBodies[localPlayer.id] = Bodies.circle(localPlayer.x, localPlayer.y, playerRadius, {
-    restitution: 0.8,
-    friction: 0.1,
-    frictionAir: 0.05,
-    label: localPlayer.id,
-  });
-  World.add(world, playerBodies[localPlayer.id]);
+  addPlayerToPhysics(localPlayer);
 
   peer.on("connection", connection => {
     connections.push(connection);
+
     connection.on("open", () => {
       connection.send({ type: "init", players, score });
     });
@@ -63,29 +59,21 @@ function createRoomAsHost() {
       }
     });
   });
-}
 
-function connectToHost(hostRoomId) {
-  const conn = peer.connect(hostRoomId);
-  conn.on("open", () => {
-    connections.push(conn);
-
-    conn.send({ type: "newPlayer", player: { id: localPlayer.id, x: localPlayer.x, y: localPlayer.y } });
-
-    conn.on("data", handleClientData);
-  });
-
-  conn.on("close", () => {
-    alert("Você foi desconectado do host.");
-    players = {};
-  });
+  // Sync positions periodically
+  setInterval(() => {
+    if (localPlayer.isHost) {
+      syncHostPositions();
+      broadcast({ type: "updatePlayers", players });
+    }
+  }, 50);
 }
 
 function handleHostData(data, connection) {
   switch (data.type) {
     case "newPlayer":
       players[data.player.id] = { x: data.player.x, y: data.player.y, id: data.player.id };
-      addRemotePlayer(data.player);
+      addPlayerToPhysics(data.player);
       broadcast({ type: "updatePlayers", players });
       break;
 
@@ -95,6 +83,7 @@ function handleHostData(data, connection) {
         const body = playerBodies[data.playerId];
         if (body) {
           Body.setVelocity(body, { x: data.deltaX, y: data.deltaY });
+          Body.setPosition(body, { x: data.x, y: data.y });
           syncHostPositions();
         }
         broadcast({ type: "updatePlayers", players });
@@ -110,6 +99,22 @@ function handleHostData(data, connection) {
   }
 }
 
+// Client Functions
+function connectToHost(hostRoomId) {
+  const conn = peer.connect(hostRoomId);
+  connections.push(conn);
+
+  conn.on("open", () => {
+    conn.send({ type: "newPlayer", player: { id: localPlayer.id, x: localPlayer.x, y: localPlayer.y } });
+    conn.on("data", handleClientData);
+  });
+
+  conn.on("close", () => {
+    alert("Você foi desconectado do host.");
+    players = {};
+  });
+}
+
 function handleClientData(data) {
   switch (data.type) {
     case "init":
@@ -118,7 +123,7 @@ function handleClientData(data) {
 
       Object.values(players).forEach(player => {
         if (!playerBodies[player.id]) {
-          addRemotePlayer(player);
+          addPlayerToPhysics(player);
         }
       });
       break;
@@ -130,6 +135,7 @@ function handleClientData(data) {
         const body = playerBodies[player.id];
         if (body) {
           Body.setPosition(body, { x: player.x, y: player.y });
+          Body.setVelocity(body, { x: 0, y: 0 });
         }
       });
       break;
@@ -140,33 +146,7 @@ function handleClientData(data) {
   }
 }
 
-function broadcast(data) {
-  if (localPlayer.isHost) {
-    connections.forEach(conn => {
-      if (conn.open) {
-        conn.send(data);
-      }
-    });
-  }
-}
-
-function sendPlayerAction(actionType, deltaX = 0, deltaY = 0) {
-  if (localPlayer.isHost) {
-    handleHostData({
-      type: "playerAction",
-      playerId: localPlayer.id,
-      action: actionType,
-      deltaX,
-      deltaY,
-    });
-  } else {
-    const conn = connections[0];
-    if (conn && conn.open) {
-      conn.send({ type: "playerAction", playerId: localPlayer.id, action: actionType, deltaX, deltaY });
-    }
-  }
-}
-
+// Utility Functions
 function displayRoomId(id) {
   const input = document.createElement("input");
   input.value = id;
@@ -177,17 +157,15 @@ function displayRoomId(id) {
   document.body.appendChild(input);
 }
 
-function addRemotePlayer(player) {
-  if (!playerBodies[player.id]) {
-    const body = Bodies.circle(player.x, player.y, playerRadius, {
-      restitution: 0.8,
-      friction: 0.1,
-      frictionAir: 0.05,
-      label: player.id,
-    });
-    playerBodies[player.id] = body;
-    World.add(world, body);
-  }
+function addPlayerToPhysics(player) {
+  const body = Bodies.circle(player.x, player.y, playerRadius, {
+    restitution: 0.8,
+    friction: 0.1,
+    frictionAir: 0.05,
+    label: player.id,
+  });
+  playerBodies[player.id] = body;
+  World.add(world, body);
 }
 
 function syncHostPositions() {
@@ -200,16 +178,34 @@ function syncHostPositions() {
   });
 }
 
-function syncPlayers() {
-  Object.values(players).forEach(player => {
-    const body = playerBodies[player.id];
-    if (body) {
-      player.x = body.position.x;
-      player.y = body.position.y;
+function sendPlayerAction(actionType, deltaX = 0, deltaY = 0) {
+  if (localPlayer.isHost) {
+    handleHostData({
+      type: "playerAction",
+      playerId: localPlayer.id,
+      action: actionType,
+      deltaX,
+      deltaY,
+      x: playerBodies[localPlayer.id].position.x,
+      y: playerBodies[localPlayer.id].position.y,
+    });
+  } else {
+    const conn = connections[0];
+    if (conn && conn.open) {
+      conn.send({
+        type: "playerAction",
+        playerId: localPlayer.id,
+        action: actionType,
+        deltaX,
+        deltaY,
+        x: playerBodies[localPlayer.id].position.x,
+        y: playerBodies[localPlayer.id].position.y,
+      });
     }
-  });
+  }
 }
 
+// Input Events
 canvas.addEventListener("touchmove", e => {
   const touchX = e.touches[0].clientX;
   const touchY = e.touches[0].clientY;
@@ -229,6 +225,7 @@ canvas.addEventListener("touchmove", e => {
   sendPlayerAction("move", moveX, moveY);
 });
 
+// Rendering
 function renderGame() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -241,9 +238,12 @@ function renderGame() {
   });
 }
 
+// Game Loop
 (function gameLoop() {
   Engine.update(engine);
-  syncPlayers();
+  if (localPlayer.isHost) {
+    syncHostPositions();
+  }
   renderGame();
   requestAnimationFrame(gameLoop);
 })();
